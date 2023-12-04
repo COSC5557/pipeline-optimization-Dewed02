@@ -16,39 +16,46 @@ missing_cols <- colSums(is.na(winequality_white))
 
 # Output columns with missing values
 print(missing_cols[missing_cols > 0])
-# Use random forest as learner as it had the best results in the algorithm selection exercise
+      
+# Random forest
 lrn_ranger = lrn("regr.ranger", sample.fraction = to_tune(0.1, 1), num.trees = to_tune(1, 2000),
                  mtry.ratio = to_tune(0.0, 1),  min.node.size = to_tune(lower = 1, upper = 20))
 
-# Scale data
-graph =po("yeojohnson", lower = to_tune(0, 10), upper = to_tune(10, 30)) %>>% lrn_ranger
-# Visualize Pipeline
-graph$plot(horizontal = TRUE)
+# Benchmarking pipline with different learners all hyperparameters were taken from https://github.com/COSC5557/pipeline-optimization-salarjarhan/blob/main/Pipeline%20Optimization.R
+lrn_knn = lrn("regr.kknn", k = to_tune(lower = 1, upper = 20), distance = to_tune(lower = 1, upper = 20))
+lrn_svm = lrn("regr.svm", type = "eps-regression", kernel = "radial", cost = to_tune(lower = 0.1, upper = 10), epsilon = to_tune(lower = 0.01, upper = 2), gamma = to_tune(lower = 0.01, upper = 2))
+lrn_xgboost = lrn("regr.xgboost", nrounds = to_tune(lower = 10, upper = 300), max_depth =  to_tune(lower = 1, upper = 20))
 
-
-# Change graph to learner for tuning
-graph_learner = as_learner(graph)
-
-# Define tuning configuration 
-tuned = auto_tuner(
-  tuner = tnr("mbo"),
-  learner = graph_learner,
-  resampling = rsmp("cv", folds = 5),
-  measure = msr("regr.rsq"),
-  #search_space = lts_ranger,
-  terminator = trm("run_time", secs = 300)
-)
 
 # Unoptimized learner and featureless
 unop_lrn = lrn("regr.ranger")
 featureless = lrn("regr.featureless")
+learners = list(lrn_knn, lrn_svm, lrn_xgboost, lrn_ranger)
 
+# Scale data
+graph =po("yeojohnson", lower = to_tune(0, 10), upper = to_tune(10, 30)) %>>% learners
+# Visualize Pipeline
+graph$plot(horizontal = TRUE)
+
+tuned_learners = lapply(learners, function(lrn) {
+  graph = po("yeojohnson", lower = to_tune(0, 10), upper = to_tune(10, 30)) %>>% lrn
+  graph_learner = as_learner(graph)
+  auto_tuner(
+    tuner = tnr("mbo"),
+    learner = graph_learner,
+    resampling = rsmp("cv", folds = 5),
+    measure = msr("regr.mse"),
+    #search_space = lts_ranger,
+    terminator = trm("run_time", secs = 1800)
+  )
+})
 
 # Nested resampling
-design = benchmark_grid(wine, c(tuned, unop_lrn, featureless), rsmp("cv", folds = 3))
+design = benchmark_grid(wine, c(tuned_learners, unop_lrn, featureless), rsmp("cv", folds = 3))
 bmr = benchmark(design)
 bmr$aggregate()[, .(task_id, learner_id, regr.mse)]
-autoplot(bmr, measure = msr("regr.mse"))
+autoplot(bmr, measure = msr("regr.mse")) 
+
 
 
 # Check degree that each featrue is skewed from normal distribution as well as min and max value for each feature
@@ -115,27 +122,4 @@ max(a) # 14.2
 skewness(a) # 0.4870435
 
 
-# Benchmarking pipline with different learners all hyperparameters were taken from https://github.com/COSC5557/pipeline-optimization-salarjarhan/blob/main/Pipeline%20Optimization.R
-lrn_knn = lrn("regr.kknn", k = to_tune(lower = 1, upper = 20), distance = to_tune(lower = 1, upper = 20))
-lrn_svm = lrn("regr.svm", type = "eps-regression", kernel = "radial", cost = to_tune(lower = 0.1, upper = 10), epsilon = to_tune(lower = 0.01, upper = 2), gamma = to_tune(lower = 0.01, upper = 2))
-lrn_xgboost = lrn("regr.xgboost", nrounds = to_tune(lower = 10, upper = 300), max_depth =  to_tune(lower = 1, upper = 20))
-learners = list(lrn_knn, lrn_svm, lrn_xgboost)
 
-tuned_learners = lapply(learners, function(lrn) {
-  graph = po("yeojohnson", lower = to_tune(0, 10), upper = to_tune(10, 30)) %>>% lrn
-  graph_learner = as_learner(graph)
-  auto_tuner(
-    tuner = tnr("mbo"),
-    learner = graph_learner,
-    resampling = rsmp("cv", folds = 5),
-    measure = msr("regr.mse"),
-    #search_space = lts_ranger,
-    terminator = trm("run_time", secs = 300)
-  )
-})
-
-# Nested resampling
-design = benchmark_grid(wine, c(tuned, tuned_learners, unop_lrn, featureless), rsmp("cv", folds = 3))
-bmr = benchmark(design)
-bmr$aggregate()[, .(task_id, learner_id, regr.mse)]
-autoplot(bmr, measure = msr("regr.mse"))
